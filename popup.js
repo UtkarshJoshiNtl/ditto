@@ -1,23 +1,32 @@
 class StickyNotesPopup {
     constructor() {
         this.notes = [];
+        this.filteredNotes = [];
         this.init();
     }
 
-    init() {
+    async init() {
         this.bindEvents();
-        this.loadNotes();
+        await this.loadNotes();
     }
 
     bindEvents() {
         const addNoteBtn = document.getElementById('addNoteBtn');
+        const searchInput = document.getElementById('searchInput');
+
         addNoteBtn.addEventListener('click', () => this.createNote());
+        
+        searchInput.addEventListener('input', (e) => {
+            const query = e.target.value.toLowerCase();
+            this.filterNotes(query);
+        });
     }
 
     async loadNotes() {
         try {
             const result = await chrome.storage.local.get(['stickyNotes']);
             this.notes = result.stickyNotes || [];
+            this.filteredNotes = [...this.notes];
             this.renderNotes();
         } catch (error) {
             console.error('Error loading notes:', error);
@@ -32,106 +41,91 @@ class StickyNotesPopup {
         }
     }
 
+    filterNotes(query) {
+        if (!query) {
+            this.filteredNotes = [...this.notes];
+        } else {
+            this.filteredNotes = this.notes.filter(note => 
+                note.title.toLowerCase().includes(query) || 
+                note.content.toLowerCase().includes(query)
+            );
+        }
+        this.renderNotes();
+    }
+
     createNote() {
         const note = {
             id: Date.now().toString(),
             title: 'New Note',
-            content: 'Click to edit this note...',
+            content: '',
             timestamp: new Date().toISOString(),
-            position: { x: 100, y: 100 }
+            position: { x: 50, y: 50 },
+            pinned: false,
+            color: 'default'
         };
 
         this.notes.unshift(note);
         this.saveNotes();
-        this.renderNotes();
+        this.loadNotes(); // Reload and re-render
         this.notifyContentScript('create', note);
     }
 
-    updateNote(noteId, updates) {
-        const noteIndex = this.notes.findIndex(note => note.id === noteId);
-        if (noteIndex !== -1) {
-            this.notes[noteIndex] = { ...this.notes[noteIndex], ...updates };
-            this.saveNotes();
-            this.renderNotes();
-            this.notifyContentScript('update', this.notes[noteIndex]);
-        }
-    }
-
-    deleteNote(noteId) {
-        this.notes = this.notes.filter(note => note.id !== noteId);
-        this.saveNotes();
-        this.renderNotes();
-        this.notifyContentScript('delete', { id: noteId });
-    }
-
     renderNotes() {
-        const notesList = document.getElementById('notesList');
+        const pinnedList = document.getElementById('pinnedNotesList');
+        const unpinnedList = document.getElementById('notesList');
         const emptyState = document.getElementById('emptyState');
+        const pinnedSection = document.getElementById('pinnedSection');
+        const notesSection = document.getElementById('notesSection');
 
-        if (this.notes.length === 0) {
-            notesList.style.display = 'none';
+        const pinnedNotes = this.filteredNotes.filter(n => n.pinned);
+        const unpinnedNotes = this.filteredNotes.filter(n => !n.pinned);
+
+        if (this.filteredNotes.length === 0) {
+            pinnedSection.style.display = 'none';
+            notesSection.style.display = 'none';
             emptyState.style.display = 'block';
             return;
         }
 
-        notesList.style.display = 'flex';
         emptyState.style.display = 'none';
+        
+        // Render Pinned
+        if (pinnedNotes.length > 0) {
+            pinnedSection.style.display = 'block';
+            pinnedList.innerHTML = pinnedNotes.map(n => this.createNoteHTML(n)).join('');
+        } else {
+            pinnedSection.style.display = 'none';
+        }
 
-        notesList.innerHTML = this.notes.map(note => this.createNoteHTML(note)).join('');
+        // Render Others
+        if (unpinnedNotes.length > 0) {
+            notesSection.style.display = 'block';
+            unpinnedList.innerHTML = unpinnedNotes.map(n => this.createNoteHTML(n)).join('');
+        } else {
+            notesSection.style.display = 'none';
+        }
 
-        // Bind events for note actions
         this.bindNoteEvents();
     }
 
     createNoteHTML(note) {
         const date = new Date(note.timestamp);
-        const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const dateStr = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 
         return `
-            <div class="note-item" data-note-id="${note.id}">
-                <div class="note-title" contenteditable="true" data-field="title">${note.title}</div>
-                <div class="note-content" contenteditable="true" data-field="content">${note.content}</div>
-                <div class="note-actions">
-                    <button class="note-action-btn edit-btn" data-action="edit">Edit</button>
-                    <button class="note-action-btn delete-btn" data-action="delete">Delete</button>
-                </div>
+            <div class="note-item ${note.pinned ? 'pinned' : ''}" data-note-id="${note.id}">
+                <div class="note-title">${this.escapeHtml(note.title || 'Untitled')}</div>
+                <div class="note-content">${this.escapeHtml(note.content || 'No content')}</div>
                 <div class="note-time">${dateStr}</div>
             </div>
         `;
     }
 
     bindNoteEvents() {
-        // Handle contenteditable changes
-        document.querySelectorAll('[contenteditable]').forEach(element => {
-            element.addEventListener('blur', (e) => {
-                const noteId = e.target.closest('.note-item').dataset.noteId;
-                const field = e.target.dataset.field;
-                const value = e.target.textContent.trim();
-                
-                this.updateNote(noteId, { [field]: value });
-            });
-
-            element.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    e.target.blur();
-                }
-            });
-        });
-
-        // Handle action buttons
-        document.querySelectorAll('.note-action-btn').forEach(button => {
-            button.addEventListener('click', (e) => {
-                const noteId = e.target.closest('.note-item').dataset.noteId;
-                const action = e.target.dataset.action;
-
-                if (action === 'delete') {
-                    if (confirm('Are you sure you want to delete this note?')) {
-                        this.deleteNote(noteId);
-                    }
-                } else if (action === 'edit') {
-                    this.focusNoteOnPage(noteId);
-                }
+        document.querySelectorAll('.note-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const noteId = item.dataset.noteId;
+                this.focusNoteOnPage(noteId);
             });
         });
     }
@@ -142,7 +136,7 @@ class StickyNotesPopup {
                 chrome.tabs.sendMessage(tabs[0].id, {
                     action: action,
                     note: data
-                });
+                }).catch(() => {}); // Ignore errors if content script not loaded
             }
         });
     }
@@ -153,13 +147,18 @@ class StickyNotesPopup {
                 chrome.tabs.sendMessage(tabs[0].id, {
                     action: 'focus',
                     noteId: noteId
-                });
+                }).catch(() => {});
             }
         });
     }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
 }
 
-// Initialize the popup when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
     new StickyNotesPopup();
 });
