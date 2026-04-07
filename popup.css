@@ -1,3 +1,15 @@
+:root {
+    --primary: #6366f1;
+    --primary-hover: #4f46e5;
+    --bg-dark: #1e293b;
+    --bg-light: #f8fafc;
+    --text-main: #334155;
+    --text-muted: #64748b;
+    --border: #e2e8f0;
+    --glass: rgba(255, 255, 255, 0.8);
+    --shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+}
+
 * {
     margin: 0;
     padding: 0;
@@ -5,27 +17,26 @@
 }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    font-family: 'Outfit', sans-serif;
     width: 350px;
-    min-height: 400px;
-    background: #f8f9fa;
-    color: #333;
+    height: 500px;
+    background: var(--bg-light);
+    color: var(--text-main);
 }
 
 .container {
     display: flex;
     flex-direction: column;
-    height: 100vh;
+    height: 100%;
 }
 
 .header {
-    background: #4a90e2;
+    background: var(--bg-dark);
+    padding: 20px;
     color: white;
-    padding: 16px;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    border-bottom: 1px solid #357abd;
 }
 
 .header h1 {
@@ -33,27 +44,70 @@ body {
     font-weight: 600;
 }
 
+.badge {
+    background: var(--primary);
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-left: 4px;
+    vertical-align: middle;
+}
+
 .add-btn {
-    background: #ffffff;
-    color: #4a90e2;
+    background: var(--primary);
+    color: white;
     border: none;
-    padding: 8px 12px;
-    border-radius: 6px;
+    padding: 8px 14px;
+    border-radius: 8px;
     cursor: pointer;
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 500;
     transition: all 0.2s ease;
 }
 
 .add-btn:hover {
-    background: #f0f7ff;
+    background: var(--primary-hover);
     transform: translateY(-1px);
+}
+
+.search-container {
+    padding: 12px 20px;
+    background: white;
+    border-bottom: 1px solid var(--border);
+}
+
+#searchInput {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-family: 'Outfit', sans-serif;
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.2s;
+}
+
+#searchInput:focus {
+    border-color: var(--primary);
 }
 
 .main {
     flex: 1;
     overflow-y: auto;
-    padding: 16px;
+    padding: 20px;
+}
+
+.section {
+    margin-bottom: 24px;
+}
+
+.section-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+    font-weight: 600;
 }
 
 .notes-list {
@@ -64,85 +118,71 @@ body {
 
 .note-item {
     background: white;
-    border-radius: 8px;
-    padding: 12px;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-    border-left: 4px solid #4a90e2;
+    border-radius: 12px;
+    padding: 16px;
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border);
     transition: all 0.2s ease;
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
 }
 
 .note-item:hover {
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
-    transform: translateY(-1px);
+    transform: translateX(4px);
+    border-color: var(--primary);
+}
+
+.note-item.pinned {
+    border-left: 4px solid var(--primary);
 }
 
 .note-title {
     font-weight: 600;
-    margin-bottom: 4px;
-    color: #2c3e50;
     font-size: 14px;
+    margin-bottom: 6px;
+    color: var(--text-main);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .note-content {
-    color: #666;
-    font-size: 12px;
-    line-height: 1.4;
-    max-height: 60px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text-muted);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
     overflow: hidden;
 }
 
-.note-actions {
+.note-time {
+    font-size: 10px;
+    color: var(--text-muted);
     margin-top: 8px;
-    display: flex;
-    gap: 8px;
-}
-
-.note-action-btn {
-    background: none;
-    border: none;
-    color: #666;
-    cursor: pointer;
-    font-size: 11px;
-    padding: 4px 8px;
-    border-radius: 4px;
-    transition: all 0.2s ease;
-}
-
-.note-action-btn:hover {
-    background: #f0f0f0;
-    color: #333;
-}
-
-.delete-btn:hover {
-    background: #ffebee;
-    color: #d32f2f;
 }
 
 .empty-state {
     text-align: center;
-    padding: 40px 20px;
-    color: #999;
+    padding-top: 60px;
+    color: var(--text-muted);
 }
 
-.empty-state p {
-    font-size: 14px;
-    line-height: 1.5;
+.empty-icon {
+    font-size: 40px;
+    margin-bottom: 12px;
 }
 
-/* Scrollbar styling */
 .main::-webkit-scrollbar {
     width: 6px;
 }
 
 .main::-webkit-scrollbar-track {
-    background: #f1f1f1;
+    background: var(--bg-light);
 }
 
 .main::-webkit-scrollbar-thumb {
-    background: #c1c1c1;
+    background: var(--border);
     border-radius: 3px;
-}
-
-.main::-webkit-scrollbar-thumb:hover {
-    background: #a8a8a8;
 }
