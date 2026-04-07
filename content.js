@@ -2,19 +2,21 @@ class StickyNotesContent {
     constructor() {
         this.notes = [];
         this.container = null;
+        this.isEditing = false;
         this.init();
     }
 
-    init() {
+    async init() {
         this.createContainer();
-        this.loadNotes();
-        this.bindEvents();
+        await this.loadNotes();
         this.setupMessageListener();
+        this.bindGlobalEvents();
     }
 
     createContainer() {
+        if (document.getElementById('sticky-notes-pro-container')) return;
         this.container = document.createElement('div');
-        this.container.id = 'sticky-notes-container';
+        this.container.id = 'sticky-notes-pro-container';
         this.container.className = 'sticky-notes-container';
         document.body.appendChild(this.container);
     }
@@ -25,32 +27,41 @@ class StickyNotesContent {
             this.notes = result.stickyNotes || [];
             this.renderNotes();
         } catch (error) {
-            console.error('Error loading notes in content script:', error);
+            console.error('Error loading notes:', error);
         }
     }
 
     renderNotes() {
         this.container.innerHTML = '';
-        
         this.notes.forEach(note => {
-            const noteElement = this.createNoteElement(note);
-            this.container.appendChild(noteElement);
+            const noteEl = this.createNoteElement(note);
+            this.container.appendChild(noteEl);
+            setTimeout(() => noteEl.classList.add('visible'), 10);
         });
     }
 
     createNoteElement(note) {
         const noteEl = document.createElement('div');
-        noteEl.className = 'sticky-note';
+        noteEl.className = `sticky-note color-${note.color || 'default'} ${note.pinned ? 'pinned' : ''}`;
         noteEl.dataset.noteId = note.id;
         noteEl.style.left = note.position.x + 'px';
         noteEl.style.top = note.position.y + 'px';
+        noteEl.style.width = (note.size?.width || 280) + 'px';
+        noteEl.style.height = (note.size?.height || 180) + 'px';
+        noteEl.style.zIndex = note.pinned ? '2147483647' : '2147483646';
+
+        const renderedContent = this.renderMarkdown(note.content);
 
         noteEl.innerHTML = `
             <div class="sticky-note-header">
-                <div class="sticky-note-title">${this.escapeHtml(note.title)}</div>
-                <button class="sticky-note-close">×</button>
+                <div class="sticky-note-title" contenteditable="true" spellcheck="false">${this.escapeHtml(note.title || 'Untitled')}</div>
+                <div class="sticky-note-actions">
+                    <button class="action-btn pin-btn" title="${note.pinned ? 'Unpin' : 'Pin'}">${note.pinned ? '📌' : '📍'}</button>
+                    <button class="action-btn color-btn" title="Change Color">🎨</button>
+                    <button class="action-btn delete-btn" title="Delete Note">🗑️</button>
+                </div>
             </div>
-            <div class="sticky-note-content" contenteditable="true">${this.escapeHtml(note.content)}</div>
+            <div class="sticky-note-content" contenteditable="true" spellcheck="false">${renderedContent}</div>
             <div class="sticky-note-resize"></div>
         `;
 
@@ -61,220 +72,237 @@ class StickyNotesContent {
         return noteEl;
     }
 
+    renderMarkdown(text) {
+        if (!text) return '';
+        let html = this.escapeHtml(text);
+        
+        // Bold: **text**
+        html = html.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
+        
+        // Italic: *text*
+        html = html.replace(/\*(.*?)\*/g, '<i>$1</i>');
+        
+        // Lists: * item
+        html = html.replace(/^\* (.*?)$/gm, '<li>$1</li>');
+        html = html.replace(/(<li>.*?<\/li>)/gs, '<ul>$1</ul>');
+        html = html.replace(/<\/ul>\n<ul>/g, ''); // Join adjacent lists
+        
+        return html;
+    }
+
+    // Reverse markdown for editing
+    reverseMarkdown(html) {
+        let text = html;
+        text = text.replace(/<b>(.*?)<\/b>/g, '**$1**');
+        text = text.replace(/<i>(.*?)<\/i>/g, '*$1*');
+        text = text.replace(/<ul>(.*?)<\/ul>/gs, (match, p1) => {
+            return p1.replace(/<li>(.*?)<\/li>/g, '* $1\n').trim();
+        });
+        text = text.replace(/<div>(.*?)<\/div>/g, '\n$1');
+        text = text.replace(/<br>/g, '\n');
+        return text.trim();
+    }
+
     makeDraggable(element) {
         let isDragging = false;
         let startX, startY, initialX, initialY;
-
         const header = element.querySelector('.sticky-note-header');
-        
+
         header.addEventListener('mousedown', (e) => {
-            if (e.target.classList.contains('sticky-note-close')) return;
-            
+            if (e.target.classList.contains('action-btn') || e.target.classList.contains('sticky-note-title')) return;
             isDragging = true;
+            element.classList.add('dragging');
             startX = e.clientX;
             startY = e.clientY;
             initialX = element.offsetLeft;
             initialY = element.offsetTop;
-            
-            element.style.zIndex = this.getMaxZIndex() + 1;
-            element.classList.add('dragging');
+            document.body.style.userSelect = 'none';
         });
 
-        document.addEventListener('mousemove', (e) => {
+        window.addEventListener('mousemove', (e) => {
             if (!isDragging) return;
-            
-            e.preventDefault();
             const dx = e.clientX - startX;
             const dy = e.clientY - startY;
-            
-            element.style.left = (initialX + dx) + 'px';
-            element.style.top = (initialY + dy) + 'px';
+            element.style.left = `${initialX + dx}px`;
+            element.style.top = `${initialY + dy}px`;
         });
 
-        document.addEventListener('mouseup', () => {
+        window.addEventListener('mouseup', () => {
             if (isDragging) {
                 isDragging = false;
                 element.classList.remove('dragging');
-                this.updateNotePosition(element.dataset.noteId, element.offsetLeft, element.offsetTop);
+                document.body.style.userSelect = '';
+                this.updateNote(element.dataset.noteId, {
+                    position: { x: element.offsetLeft, y: element.offsetTop }
+                });
             }
         });
     }
 
     makeResizable(element) {
-        const resizeHandle = element.querySelector('.sticky-note-resize');
+        const handle = element.querySelector('.sticky-note-resize');
         let isResizing = false;
-        let startX, startY, startWidth, startHeight;
+        let startX, startY, startW, startH;
 
-        resizeHandle.addEventListener('mousedown', (e) => {
+        handle.addEventListener('mousedown', (e) => {
             isResizing = true;
             startX = e.clientX;
             startY = e.clientY;
-            startWidth = element.offsetWidth;
-            startHeight = element.offsetHeight;
-            e.stopPropagation();
-        });
-
-        document.addEventListener('mousemove', (e) => {
-            if (!isResizing) return;
-            
+            startW = element.offsetWidth;
+            startH = element.offsetHeight;
             e.preventDefault();
-            const width = startWidth + (e.clientX - startX);
-            const height = startHeight + (e.clientY - startY);
-            
-            element.style.width = Math.max(200, width) + 'px';
-            element.style.height = Math.max(150, height) + 'px';
         });
 
-        document.addEventListener('mouseup', () => {
-            isResizing = false;
-        });
-    }
-
-    bindNoteEvents(element, note) {
-        const closeBtn = element.querySelector('.sticky-note-close');
-        const content = element.querySelector('.sticky-note-content');
-
-        closeBtn.addEventListener('click', () => {
-            this.deleteNote(note.id);
+        window.addEventListener('mousemove', (e) => {
+            if (!isResizing) return;
+            const w = Math.max(200, startW + (e.clientX - startX));
+            const h = Math.max(150, startH + (e.clientY - startY));
+            element.style.width = `${w}px`;
+            element.style.height = `${h}px`;
         });
 
-        content.addEventListener('blur', () => {
-            this.updateNoteContent(note.id, content.textContent.trim());
-        });
-
-        content.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                content.blur();
+        window.addEventListener('mouseup', () => {
+            if (isResizing) {
+                isResizing = false;
+                this.updateNote(element.dataset.noteId, {
+                    size: { width: element.offsetWidth, height: element.offsetHeight }
+                });
             }
         });
     }
 
-    async updateNotePosition(noteId, x, y) {
-        const noteIndex = this.notes.findIndex(n => n.id === noteId);
-        if (noteIndex !== -1) {
-            this.notes[noteIndex].position = { x, y };
-            await this.saveNotes();
-        }
+    bindNoteEvents(element, note) {
+        const titleEl = element.querySelector('.sticky-note-title');
+        const contentEl = element.querySelector('.sticky-note-content');
+        const pinBtn = element.querySelector('.pin-btn');
+        const colorBtn = element.querySelector('.color-btn');
+        const deleteBtn = element.querySelector('.delete-btn');
+
+        // Handle Content Editing (Show raw text when editing)
+        contentEl.addEventListener('focus', () => {
+            this.isEditing = true;
+            contentEl.innerText = this.notes.find(n => n.id === note.id).content;
+        });
+
+        contentEl.addEventListener('blur', () => {
+            this.isEditing = false;
+            const newContent = contentEl.innerText;
+            this.updateNote(note.id, { content: newContent });
+            contentEl.innerHTML = this.renderMarkdown(newContent);
+        });
+
+        titleEl.addEventListener('blur', () => {
+            this.updateNote(note.id, { title: titleEl.innerText });
+        });
+
+        // Toolbar Actions
+        pinBtn.addEventListener('click', () => {
+            const isPinned = !note.pinned;
+            this.updateNote(note.id, { pinned: isPinned });
+            element.classList.toggle('pinned', isPinned);
+            element.style.zIndex = isPinned ? '2147483647' : '2147483646';
+            pinBtn.innerText = isPinned ? '📌' : '📍';
+            pinBtn.title = isPinned ? 'Unpin' : 'Pin';
+        });
+
+        colorBtn.addEventListener('click', () => {
+            const colors = ['default', 'lavender', 'mint', 'sky', 'rose'];
+            const currentIndex = colors.indexOf(note.color || 'default');
+            const nextColor = colors[(currentIndex + 1) % colors.length];
+            this.updateNote(note.id, { color: nextColor });
+            colors.forEach(c => element.classList.remove(`color-${c}`));
+            element.classList.add(`color-${nextColor}`);
+            note.color = nextColor; // Update local state for cycling
+        });
+
+        deleteBtn.addEventListener('click', () => {
+            if (confirm('Delete this note?')) {
+                this.deleteNote(note.id);
+            }
+        });
     }
 
-    async updateNoteContent(noteId, content) {
+    async updateNote(noteId, updates) {
         const noteIndex = this.notes.findIndex(n => n.id === noteId);
         if (noteIndex !== -1) {
-            this.notes[noteIndex].content = content;
-            await this.saveNotes();
+            this.notes[noteIndex] = { ...this.notes[noteIndex], ...updates };
+            await chrome.storage.local.set({ stickyNotes: this.notes });
         }
     }
 
     async deleteNote(noteId) {
         this.notes = this.notes.filter(n => n.id !== noteId);
-        await this.saveNotes();
-        
-        const element = document.querySelector(`[data-note-id="${noteId}"]`);
-        if (element) {
-            element.remove();
-        }
-    }
-
-    async saveNotes() {
-        try {
-            await chrome.storage.local.set({ stickyNotes: this.notes });
-        } catch (error) {
-            console.error('Error saving notes in content script:', error);
+        await chrome.storage.local.set({ stickyNotes: this.notes });
+        const el = document.querySelector(`[data-note-id="${noteId}"]`);
+        if (el) {
+            el.style.opacity = '0';
+            el.style.transform = 'scale(0.8)';
+            setTimeout(() => el.remove(), 300);
         }
     }
 
     setupMessageListener() {
         chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-            switch (message.action) {
-                case 'create':
-                    this.addNote(message.note);
-                    break;
-                case 'update':
-                    this.updateNote(message.note);
-                    break;
-                case 'delete':
-                    this.removeNote(message.note.id);
-                    break;
-                case 'focus':
-                    this.focusNote(message.noteId);
-                    break;
+            if (message.action === 'create') {
+                this.addNote(message.note);
+            } else if (message.action === 'focus') {
+                this.focusNote(message.noteId);
+            } else if (message.action === 'context-create') {
+                this.addNoteAt(message.note, message.pos);
             }
         });
     }
 
     addNote(note) {
-        this.notes.unshift(note);
-        this.saveNotes();
-        
-        const noteElement = this.createNoteElement(note);
-        this.container.appendChild(noteElement);
-        
-        // Animate entrance
-        setTimeout(() => {
-            noteElement.classList.add('visible');
-        }, 10);
-    }
-
-    updateNote(note) {
-        const element = document.querySelector(`[data-note-id="${note.id}"]`);
-        if (element) {
-            const titleEl = element.querySelector('.sticky-note-title');
-            const contentEl = element.querySelector('.sticky-note-content');
-            
-            titleEl.textContent = note.title;
-            contentEl.textContent = note.content;
+        if (!this.notes.find(n => n.id === note.id)) {
+            this.notes.push(note);
+            const el = this.createNoteElement(note);
+            this.container.appendChild(el);
+            setTimeout(() => el.classList.add('visible'), 10);
         }
     }
 
-    removeNote(noteId) {
-        const element = document.querySelector(`[data-note-id="${noteId}"]`);
-        if (element) {
-            element.classList.add('removing');
-            setTimeout(() => {
-                element.remove();
-            }, 300);
-        }
-        
-        this.notes = this.notes.filter(n => n.id !== noteId);
-        this.saveNotes();
+    addNoteAt(note, pos) {
+        note.position = pos;
+        this.addNote(note);
+        this.updateNote(note.id, { position: pos });
     }
 
     focusNote(noteId) {
-        const element = document.querySelector(`[data-note-id="${noteId}"]`);
-        if (element) {
-            element.style.zIndex = this.getMaxZIndex() + 1;
-            element.classList.add('focused');
-            
-            // Scroll into view if needed
-            element.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-            
-            // Highlight effect
-            setTimeout(() => {
-                element.classList.remove('focused');
-            }, 2000);
+        const el = document.querySelector(`[data-note-id="${noteId}"]`);
+        if (el) {
+            el.classList.add('focused');
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            setTimeout(() => el.classList.remove('focused'), 2000);
         }
     }
 
-    getMaxZIndex() {
-        const notes = document.querySelectorAll('.sticky-note');
-        let maxZ = 1000;
-        notes.forEach(note => {
-            const z = parseInt(window.getComputedStyle(note).zIndex) || 0;
-            if (z > maxZ) maxZ = z;
+    bindGlobalEvents() {
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'n' && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                this.createNewAtCenter();
+            }
         });
-        return maxZ;
     }
 
-    bindEvents() {
-        // Prevent notes from interfering with page interactions
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') {
-                const focusedNote = document.activeElement.closest('.sticky-note');
-                if (focusedNote) {
-                    focusedNote.blur();
-                }
-            }
+    createNewAtCenter() {
+        const id = Date.now().toString();
+        const note = {
+            id,
+            title: 'Quick Note',
+            content: '',
+            timestamp: new Date().toISOString(),
+            position: { x: window.innerWidth / 2 - 140, y: window.innerHeight / 2 - 90 },
+            pinned: false,
+            color: 'default'
+        };
+        this.addNote(note);
+        // Sync to storage
+        chrome.storage.local.get(['stickyNotes'], (res) => {
+            const list = res.stickyNotes || [];
+            list.push(note);
+            chrome.storage.local.set({ stickyNotes: list });
         });
     }
 
@@ -285,5 +313,4 @@ class StickyNotesContent {
     }
 }
 
-// Initialize content script
 new StickyNotesContent();
