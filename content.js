@@ -56,6 +56,7 @@ class StickyNotesContent {
             <div class="sticky-note-header">
                 <div class="sticky-note-title" contenteditable="true" spellcheck="false">${this.escapeHtml(note.title || 'Untitled')}</div>
                 <div class="sticky-note-actions">
+                    <button class="action-btn snapshot-btn" title="Take Screenshot Fragment">📸</button>
                     <button class="action-btn pin-btn" title="${note.pinned ? 'Unpin' : 'Pin'}">${note.pinned ? '📌' : '📍'}</button>
                     <button class="action-btn color-btn" title="Change Color">🎨</button>
                     <button class="action-btn delete-btn" title="Delete Note">🗑️</button>
@@ -174,9 +175,15 @@ class StickyNotesContent {
     bindNoteEvents(element, note) {
         const titleEl = element.querySelector('.sticky-note-title');
         const contentEl = element.querySelector('.sticky-note-content');
+        const snapshotBtn = element.querySelector('.snapshot-btn');
         const pinBtn = element.querySelector('.pin-btn');
         const colorBtn = element.querySelector('.color-btn');
         const deleteBtn = element.querySelector('.delete-btn');
+
+        // Snapshot Action
+        snapshotBtn.addEventListener('click', () => {
+            this.startCropping(note.id);
+        });
 
         // Handle Content Editing (Show raw text when editing)
         contentEl.addEventListener('focus', () => {
@@ -238,6 +245,85 @@ class StickyNotesContent {
             el.style.opacity = '0';
             el.style.transform = 'scale(0.8)';
             setTimeout(() => el.remove(), 300);
+        }
+    }
+
+    // --- CROPPING LOGIC ---
+    startCropping(noteId) {
+        // Hide all notes for a clean shot
+        this.container.style.display = 'none';
+
+        const overlay = document.createElement('div');
+        overlay.style.cssText = `
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5); z-index: 2147483647; cursor: crosshair;
+        `;
+        document.body.appendChild(overlay);
+
+        let startX, startY;
+        const selector = document.createElement('div');
+        selector.style.cssText = 'position: absolute; border: 2px solid #6366f1; background: rgba(99, 102, 241, 0.1); display: none;';
+        overlay.appendChild(selector);
+
+        const onMouseDown = (e) => {
+            startX = e.clientX;
+            startY = e.clientY;
+            selector.style.display = 'block';
+            selector.style.left = startX + 'px';
+            selector.style.top = startY + 'px';
+        };
+
+        const onMouseMove = (e) => {
+            if (!startX) return;
+            const w = Math.abs(e.clientX - startX);
+            const h = Math.abs(e.clientY - startY);
+            selector.style.width = w + 'px';
+            selector.style.height = h + 'px';
+            selector.style.left = Math.min(e.clientX, startX) + 'px';
+            selector.style.top = Math.min(e.clientY, startY) + 'px';
+        };
+
+        const onMouseUp = async (e) => {
+            const rect = selector.getBoundingClientRect();
+            overlay.remove();
+            
+            if (rect.width > 5 && rect.height > 5) {
+                // Request capture from background
+                chrome.runtime.sendMessage({ 
+                    action: 'capture',
+                    rect: {
+                        x: rect.x * window.devicePixelRatio,
+                        y: rect.y * window.devicePixelRatio,
+                        w: rect.width * window.devicePixelRatio,
+                        h: rect.height * window.devicePixelRatio
+                    }
+                }, (response) => {
+                    if (response && response.dataUrl) {
+                        this.attachImageToNote(noteId, response.dataUrl);
+                    }
+                });
+            }
+            
+            this.container.style.display = 'block';
+            document.removeEventListener('mousedown', onMouseDown);
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+        };
+
+        document.addEventListener('mousedown', onMouseDown);
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+    }
+
+    attachImageToNote(noteId, dataUrl) {
+        const note = this.notes.find(n => n.id === noteId);
+        if (note) {
+            const imgHtml = `<br><img src="${dataUrl}" style="max-width: 100%; border-radius: 8px; margin-top: 8px;">`;
+            note.content += imgHtml;
+            this.updateNote(noteId, { content: note.content });
+            
+            const el = document.querySelector(`[data-note-id="${noteId}"] .sticky-note-content`);
+            if (el) el.innerHTML = this.renderMarkdown(note.content);
         }
     }
 
