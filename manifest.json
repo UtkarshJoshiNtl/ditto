@@ -5,7 +5,8 @@
   "description": "Create and manage sticky notes on any webpage",
   "permissions": [
     "activeTab",
-    "storage"
+    "storage",
+    "contextMenus"
   ],
   "action": {
     "default_popup": "popup.html",
